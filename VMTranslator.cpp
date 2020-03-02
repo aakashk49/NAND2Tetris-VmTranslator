@@ -187,6 +187,16 @@ void ConvertPushCmd(CMD * pstCmd, FILE* hp)
 		fprintf(hp, "D=M\n");
 		AT_SP_D(hp);
 		break;
+	case SEG_POINTER:
+		if (pstCmd->arg2 == 0)
+			fprintf(hp, "@THIS\nD=M\n");
+		else if (pstCmd->arg2 == 1)
+			fprintf(hp, "@THAT\nD=M\n");
+		else 
+		{
+			Assert(false, "Wrong Pointer Arg2");
+		}
+		AT_SP_D(hp);
 		break;
 	default:
 		Assert(false, "Invalid Segment");
@@ -201,18 +211,33 @@ void ConvertPopCmd(CMD * pstCmd, FILE* hp)
 	SEGMENTS eSeg = SegMap[pstCmd->arg1];
 	Assert(eSeg <= SEG_TEMP, "Wrong Segment");
 	string Label = SegLabel[eSeg];
-	if (eSeg == SEG_TEMP)
+	if (eSeg == SEG_POINTER)
 	{
-		fprintf(hp, "@%d\nD=A\n@%s\nD=D+A\n", pstCmd->arg2, Label.c_str());
+		fprintf(hp,"@SP\nAM=M-1\nD=M\n");
+		if (pstCmd->arg2 == 0)
+			fprintf(hp, "@THIS\nM=D\n");
+		else if (pstCmd->arg2 == 1)
+			fprintf(hp, "@THAT\nM=D\n");
+		else
+		{
+			Assert(false, "Wrong Pointer Arg2");
+		}
 	}
 	else
 	{
-		fprintf(hp, "@%d\nD=A\n@%s\nD=D+M\n", pstCmd->arg2, Label.c_str());
+		if (eSeg == SEG_TEMP)
+		{
+			fprintf(hp, "@%d\nD=A\n@%s\nD=D+A\n", pstCmd->arg2, Label.c_str());
+		}
+		else
+		{
+			fprintf(hp, "@%d\nD=A\n@%s\nD=D+M\n", pstCmd->arg2, Label.c_str());
+		}
+		AT_SP_D(hp);
+		fprintf(hp, "@SP\nA=M-1\nD=M\n");
+		fprintf(hp, "@SP\nA=M\nA=M\nM=D\n");
+		DEC_SP(hp)
 	}
-	AT_SP_D(hp);
-	fprintf(hp, "@SP\nA=M-1\nD=M\n");
-	fprintf(hp, "@SP\nA=M\nA=M\nM=D\n");
-	DEC_SP(hp);
 }
 
 string CreateLabel(string op)
