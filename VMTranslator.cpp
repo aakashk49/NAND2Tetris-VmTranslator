@@ -2,7 +2,7 @@
 #include<stdio.h>
 #include<string>
 #include<unordered_map>
-
+#include<locale>
 using namespace std;
 
 #define Assert(X,Y) if(!(X)) \
@@ -17,7 +17,16 @@ enum CMD_TYPE
 };
 enum ARTH_OP
 {
-	OP_ADD = 1,
+	OP_ADD = 0,
+	OP_SUB,
+	OP_AND,
+	OP_OR,
+	OP_EQ,
+	OP_LT,
+	OP_GT,
+	OP_NEG,
+	OP_NOT,
+	OP_ARTH_CNT
 
 };
 enum SEGMENTS
@@ -46,9 +55,25 @@ unordered_map <string, CMD_TYPE> cmdMap= {
 	{ "push", C_PUSH },
 	{ "pop", C_POP },
 	{ "add", C_ARITHMETIC },
+	{ "eq", C_ARITHMETIC },
+	{ "lt", C_ARITHMETIC },
+	{ "gt", C_ARITHMETIC },
+	{ "sub", C_ARITHMETIC },
+	{ "and", C_ARITHMETIC },
+	{ "or", C_ARITHMETIC },
+	{ "neg", C_ARITHMETIC },
+	{ "not", C_ARITHMETIC },
 };
 unordered_map <string, ARTH_OP> MathsMap = {
 	{ "add", OP_ADD },
+	{ "eq", OP_EQ },
+	{ "lt", OP_LT },
+	{ "gt", OP_GT },
+	{ "sub", OP_SUB },
+	{ "and", OP_AND },
+	{ "or", OP_OR },
+	{ "neg", OP_NEG },
+	{ "not", OP_NOT },
 
 };
 unordered_map <string, SEGMENTS> SegMap = {
@@ -61,7 +86,16 @@ unordered_map <string, SEGMENTS> SegMap = {
 	{ "pointer", SEG_POINTER },
 	{ "temp", SEG_TEMP }
 };
-
+unordered_map<ARTH_OP, string> CompJump = {
+	{ OP_EQ,"JEQ" },
+	{ OP_LT, "JLT" },
+	{ OP_GT, "JGT" },
+	{ OP_SUB, "M-D" },
+	{ OP_AND, "D&M" },
+	{ OP_OR, "D|M" },
+	{ OP_NEG, "-M" },
+	{ OP_NOT, "!M" },
+};
 void ParseCmd(string ins,CMD * pstCmd)
 {
 	string cmdType, seg, index;
@@ -91,6 +125,8 @@ void ParseCmd(string ins,CMD * pstCmd)
 
 }
 
+int ganMathOpCnt[OP_ARTH_CNT] = { 0, };
+
 #define DEC_SP(hp) fprintf((hp), "@SP\n");fprintf((hp), "M=M-1\n");
 #define INC_SP(hp) fprintf((hp), "@SP\n");fprintf((hp), "M=M+1\n");
 
@@ -98,10 +134,25 @@ void ParseCmd(string ins,CMD * pstCmd)
 fprintf(hp, "A=M\n");\
 fprintf(hp, "M=D\n");
 
+#define AT_SP_VAL(hp,VAL) fprintf(hp, "@SP\n");\
+fprintf(hp, "A=M\n");\
+fprintf(hp, "M="###VAL##"\n");
+
 #define D_AT_SP(hp,op) fprintf(hp, "@SP\n");\
 fprintf(hp, "A=M\n");\
 fprintf(hp, #op##"\n");
 
+#define BINARY_OP(hp,op) DEC_SP(hp);\
+D_AT_SP(hp, D=M);\
+DEC_SP(hp);\
+D_AT_SP(hp,op);\
+
+#define UNCOND_JMP(hp,L) fprintf(hp,"@%s\n",L.c_str());\
+	fprintf(hp,"0,JMP\n");
+
+#define PUSH_TRUE(hp) AT_SP_VAL(hp,-1);INC_SP(hp);
+
+#define PUSH_FALSE(hp) AT_SP_VAL(hp,0);INC_SP(hp);
 
 void ConvertPushCmd(CMD * pstCmd, FILE* hp)
 {
@@ -117,17 +168,69 @@ void ConvertPushCmd(CMD * pstCmd, FILE* hp)
 	}
 	INC_SP(hp);
 }
+string CreateLabel(string op)
+{
+	std::locale loc;
+	std::string str = op;
+	for (std::string::size_type i = 0; i<str.length(); ++i)
+		str[i]= std::toupper(str[i], loc);
+	str += "_";
+	str += to_string(ganMathOpCnt[MathsMap[op]]++);
+	return str;
+}
+void ConvertBinaryMathsOp(FILE* hp, ARTH_OP MathsOp)
+{
+	switch (MathsOp)
+	{
+	case OP_ADD:
+		BINARY_OP(hp,M=D+M);
+		break;
+	case OP_SUB:
+		BINARY_OP(hp,M=M-D);
+		break;
+	case OP_AND:
+		BINARY_OP(hp,M=M&D);
+		break;
+	case OP_OR:
+		BINARY_OP(hp,M=M|D);
+		break;
+	default:
+		Assert(false, "Incorrect Maths Command");
+		break;
+	}
+	INC_SP(hp);
+}
 void ConvertArithmeticCmd(CMD * pstCmd, FILE* hp)
 {
-	switch (MathsMap[pstCmd->arg1])
+	string Label;
+	ARTH_OP MathsOp = MathsMap[pstCmd->arg1];
+	switch (MathsOp)
 	{
 		case OP_ADD:
-			DEC_SP(hp);
-			D_AT_SP(hp,D=M);
-			DEC_SP(hp);
-			D_AT_SP(hp, D=D+M);
-			AT_SP_D(hp);
-			INC_SP(hp);
+		case OP_SUB:
+		case OP_AND:
+		case OP_OR:
+			ConvertBinaryMathsOp(hp, MathsOp);
+			break;
+		case OP_LT:
+		case OP_EQ:
+		case OP_GT:
+			BINARY_OP(hp, D=M-D);
+			Label = CreateLabel(pstCmd->arg1);
+			fprintf(hp, "@%s\n", Label.c_str());
+			fprintf(hp, "D;%s\n", CompJump[MathsOp].c_str());
+			PUSH_FALSE(hp);
+			fprintf(hp, "@END_%s\n", Label.c_str());
+			fprintf(hp, "0;JMP\n");
+			fprintf(hp, "(%s)\n", Label.c_str());
+			PUSH_TRUE(hp);
+			fprintf(hp, "(END_%s)\n", Label.c_str());
+			break;
+		case OP_NEG:
+		case OP_NOT:
+			fprintf(hp, "@SP\n");
+			fprintf(hp, "A=M-1\n");
+			fprintf(hp, "M=%s\n",CompJump[MathsOp].c_str());
 			break;
 		default:
 			Assert(false, "Incorrect Maths Command");
