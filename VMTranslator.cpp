@@ -86,6 +86,13 @@ unordered_map <string, SEGMENTS> SegMap = {
 	{ "pointer", SEG_POINTER },
 	{ "temp", SEG_TEMP }
 };
+unordered_map<SEGMENTS, string> SegLabel = {
+	{ SEG_LOCAL, "LCL" },
+	{ SEG_ARG, "ARG" },
+	{ SEG_THIS, "THIS" },
+	{ SEG_THAT, "THAT" },
+	{ SEG_TEMP, "5" },
+};
 unordered_map<ARTH_OP, string> CompJump = {
 	{ OP_EQ,"JEQ" },
 	{ OP_LT, "JLT" },
@@ -156,11 +163,24 @@ D_AT_SP(hp,op);\
 
 void ConvertPushCmd(CMD * pstCmd, FILE* hp)
 {
-	switch (SegMap[pstCmd->arg1])
+	Assert(pstCmd->arg1.size() > 0, "Wrong Segment");
+	Assert(pstCmd->arg2 >= 0, "Wrong offset");
+	SEGMENTS eSeg = SegMap[pstCmd->arg1];
+	Assert(eSeg <= SEG_TEMP, "Wrong Segment");
+	switch (eSeg)
 	{
 	case SEG_CONSTANT:
 		fprintf(hp, "@%d\n", pstCmd->arg2);
 		fprintf(hp, "D=A\n");
+		AT_SP_D(hp);
+		break;
+	case SEG_ARG:
+	case SEG_THIS:
+	case SEG_THAT:
+	case SEG_LOCAL:
+	case SEG_TEMP:
+		fprintf(hp, "@%d\nD=A\n@%s\nD=D+M\n", pstCmd->arg2, SegLabel[eSeg].c_str());
+		fprintf(hp, "A=D\nD=M\n");
 		AT_SP_D(hp);
 		break;
 	default:
@@ -168,6 +188,28 @@ void ConvertPushCmd(CMD * pstCmd, FILE* hp)
 	}
 	INC_SP(hp);
 }
+
+void ConvertPopCmd(CMD * pstCmd, FILE* hp)
+{
+	Assert(pstCmd->arg1.size() > 0, "Wrong Segment");
+	Assert(pstCmd->arg2 >= 0, "Wrong offset");
+	SEGMENTS eSeg = SegMap[pstCmd->arg1];
+	Assert(eSeg <= SEG_TEMP, "Wrong Segment");
+	string Label = SegLabel[eSeg];
+	if (eSeg == SEG_TEMP)
+	{
+		fprintf(hp, "@%d\nD=A\n@%s\nD=D+A\n", pstCmd->arg2, Label.c_str());
+	}
+	else
+	{
+		fprintf(hp, "@%d\nD=A\n@%s\nD=D+M\n", pstCmd->arg2, Label.c_str());
+	}
+	AT_SP_D(hp);
+	fprintf(hp, "@SP\nA=M-1\nD=M\n");
+	fprintf(hp, "@SP\nA=M\nA=M\nM=D\n");
+	DEC_SP(hp);
+}
+
 string CreateLabel(string op)
 {
 	std::locale loc;
@@ -249,6 +291,7 @@ void ConvertCmd(CMD * pstCmd,FILE* hp)
 			ConvertPushCmd(pstCmd, hp);
 			break;
 		case C_POP:
+			ConvertPopCmd(pstCmd, hp);
 			break;
 		default:
 			Assert(false, "Incorrect Command");
