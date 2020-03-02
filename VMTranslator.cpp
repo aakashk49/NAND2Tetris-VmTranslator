@@ -178,10 +178,15 @@ void ConvertPushCmd(CMD * pstCmd, FILE* hp)
 	case SEG_THIS:
 	case SEG_THAT:
 	case SEG_LOCAL:
-	case SEG_TEMP:
-		fprintf(hp, "@%d\nD=A\n@%s\nD=D+M\n", pstCmd->arg2, SegLabel[eSeg].c_str());
-		fprintf(hp, "A=D\nD=M\n");
+		fprintf(hp, "@%d\nD=A\n@%s\nAD=D+M\n", pstCmd->arg2, SegLabel[eSeg].c_str());
+		fprintf(hp, "D=M\n");
 		AT_SP_D(hp);
+		break;
+	case SEG_TEMP:
+		fprintf(hp, "@%d\nD=A\n@%s\nAD=D+A\n", pstCmd->arg2, SegLabel[eSeg].c_str());
+		fprintf(hp, "D=M\n");
+		AT_SP_D(hp);
+		break;
 		break;
 	default:
 		Assert(false, "Invalid Segment");
