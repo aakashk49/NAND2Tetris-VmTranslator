@@ -161,7 +161,7 @@ D_AT_SP(hp,op);\
 
 #define PUSH_FALSE(hp) AT_SP_VAL(hp,0);INC_SP(hp);
 
-void ConvertPushCmd(CMD * pstCmd, FILE* hp)
+void ConvertPushCmd(CMD * pstCmd, FILE* hp,char* fn)
 {
 	Assert(pstCmd->arg1.size() > 0, "Wrong Segment");
 	Assert(pstCmd->arg2 >= 0, "Wrong offset");
@@ -172,7 +172,6 @@ void ConvertPushCmd(CMD * pstCmd, FILE* hp)
 	case SEG_CONSTANT:
 		fprintf(hp, "@%d\n", pstCmd->arg2);
 		fprintf(hp, "D=A\n");
-		AT_SP_D(hp);
 		break;
 	case SEG_ARG:
 	case SEG_THIS:
@@ -180,12 +179,10 @@ void ConvertPushCmd(CMD * pstCmd, FILE* hp)
 	case SEG_LOCAL:
 		fprintf(hp, "@%d\nD=A\n@%s\nAD=D+M\n", pstCmd->arg2, SegLabel[eSeg].c_str());
 		fprintf(hp, "D=M\n");
-		AT_SP_D(hp);
 		break;
 	case SEG_TEMP:
 		fprintf(hp, "@%d\nD=A\n@%s\nAD=D+A\n", pstCmd->arg2, SegLabel[eSeg].c_str());
 		fprintf(hp, "D=M\n");
-		AT_SP_D(hp);
 		break;
 	case SEG_POINTER:
 		if (pstCmd->arg2 == 0)
@@ -196,15 +193,19 @@ void ConvertPushCmd(CMD * pstCmd, FILE* hp)
 		{
 			Assert(false, "Wrong Pointer Arg2");
 		}
-		AT_SP_D(hp);
 		break;
+	case SEG_STATIC:
+		fprintf(hp, "@%s.%d\nD=M\n", fn, pstCmd->arg2);
+		break;
+
 	default:
 		Assert(false, "Invalid Segment");
 	}
+	AT_SP_D(hp);
 	INC_SP(hp);
 }
 
-void ConvertPopCmd(CMD * pstCmd, FILE* hp)
+void ConvertPopCmd(CMD * pstCmd, FILE* hp,char*fn)
 {
 	Assert(pstCmd->arg1.size() > 0, "Wrong Segment");
 	Assert(pstCmd->arg2 >= 0, "Wrong offset");
@@ -222,6 +223,12 @@ void ConvertPopCmd(CMD * pstCmd, FILE* hp)
 		{
 			Assert(false, "Wrong Pointer Arg2");
 		}
+	}
+	else if (eSeg == SEG_STATIC)
+	{
+		DEC_SP(hp);
+		D_AT_SP(hp,D=M);
+		fprintf(hp, "@%s.%d\nM=D\n", fn, pstCmd->arg2);
 	}
 	else
 	{
@@ -310,7 +317,7 @@ void ConvertArithmeticCmd(CMD * pstCmd, FILE* hp)
 	}
 }
 
-void ConvertCmd(CMD * pstCmd,FILE* hp)
+void ConvertCmd(CMD * pstCmd,FILE* hp,char*fn)
 {
 	switch (pstCmd->eCmdType)
 	{
@@ -318,10 +325,10 @@ void ConvertCmd(CMD * pstCmd,FILE* hp)
 			ConvertArithmeticCmd(pstCmd, hp);
 			break;
 		case C_PUSH:
-			ConvertPushCmd(pstCmd, hp);
+			ConvertPushCmd(pstCmd, hp,fn);
 			break;
 		case C_POP:
-			ConvertPopCmd(pstCmd, hp);
+			ConvertPopCmd(pstCmd, hp,fn);
 			break;
 		default:
 			Assert(false, "Incorrect Command");
@@ -379,7 +386,7 @@ int main(int argc, char*argv[])
 					Assert(stCurCmd.arg1.size() == 0, "Arithmetic Command Parse Error");
 					stCurCmd.arg1 = ins;
 				}
-				ConvertCmd(&stCurCmd, hp);
+				ConvertCmd(&stCurCmd, hp,fn);
 
 			}
 		}
