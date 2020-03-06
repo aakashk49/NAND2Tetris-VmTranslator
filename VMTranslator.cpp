@@ -3,6 +3,9 @@
 #include<string>
 #include<unordered_map>
 #include<locale>
+#include<filesystem>
+#include<stack>
+
 using namespace std;
 
 #define Assert(X,Y) if(!(X)) \
@@ -13,7 +16,13 @@ enum CMD_TYPE
 	C_NOCMD =0,
 	C_ARITHMETIC = 1,
 	C_PUSH,
-	C_POP
+	C_POP,
+	C_LABEL,
+	C_GOTO,
+	C_IF,
+	C_FUNCTION,
+	C_RETURN,
+	C_CALL
 };
 enum ARTH_OP
 {
@@ -63,6 +72,12 @@ unordered_map <string, CMD_TYPE> cmdMap= {
 	{ "or", C_ARITHMETIC },
 	{ "neg", C_ARITHMETIC },
 	{ "not", C_ARITHMETIC },
+	{"label",C_LABEL},
+	{"goto",C_GOTO},
+	{ "if-goto",C_IF },
+	{"function",C_FUNCTION},
+	{"return",C_RETURN},
+	{ "call",C_CALL }
 };
 unordered_map <string, ARTH_OP> MathsMap = {
 	{ "add", OP_ADD },
@@ -103,6 +118,8 @@ unordered_map<ARTH_OP, string> CompJump = {
 	{ OP_NEG, "-M" },
 	{ OP_NOT, "!M" },
 };
+
+stack<string> FunctionStack;
 void ParseCmd(string ins,CMD * pstCmd)
 {
 	string cmdType, seg, index;
@@ -114,20 +131,28 @@ void ParseCmd(string ins,CMD * pstCmd)
 
 		ins = ins.substr(space1 + 1);
 		space1 = ins.find(' ');
-		Assert(space1 >= 0, "Wrong parse arg1");
-		seg = ins.substr(0, space1);
-		pstCmd->arg1 = seg;
+		//Assert(space1 >= 0, "Wrong parse arg1");
+		if (space1 >= 0)
+		{
+			seg = ins.substr(0, space1);
+			pstCmd->arg1 = seg;
 
-		ins = ins.substr(space1 + 1);
-		Assert(ins.size() > 0, "Wrong Parse arg2");
-		Assert(ins[0] >= '0'&&ins[0] <= '9', "Wrong Parse arg2");
-		pstCmd->arg2 = stoi(ins);
+			ins = ins.substr(space1 + 1);
+			Assert(ins.size() > 0, "Wrong Parse arg2");
+			Assert(ins[0] >= '0'&&ins[0] <= '9', "Wrong Parse arg2");
+			pstCmd->arg2 = stoi(ins);
+		}
+		else
+		{
+			//branch Commands
+			pstCmd->arg1 = ins; //Label in arg1
+		}
 
 	}
 	else
 	{
 		pstCmd->eCmdType = cmdMap[ins];
-		Assert(pstCmd->eCmdType == C_ARITHMETIC, "Wrong Parse Arithmetic");
+		Assert(pstCmd->eCmdType == C_ARITHMETIC || pstCmd->eCmdType == C_RETURN, "Wrong Parse Arithmetic");
 	}
 
 }
@@ -316,6 +341,105 @@ void ConvertArithmeticCmd(CMD * pstCmd, FILE* hp)
 			break;
 	}
 }
+void WriteLabel(CMD * pstCmd, FILE* hp)
+{
+	Assert(pstCmd->arg1.size() > 0, "Wrong Label String");
+	Assert(pstCmd->arg2 == -1, "Wrong Label Command Parse");
+	fprintf(hp, "(%s)\n", pstCmd->arg1.c_str());
+}
+void WriteIfGoTo(CMD * pstCmd, FILE* hp)
+{
+	Assert(pstCmd->arg1.size() > 0, "Wrong Label String");
+	Assert(pstCmd->arg2 == -1, "Wrong Label Command Parse");
+	//DEC_SP(hp);
+	fprintf(hp, "@SP\nAM=M-1\nD=M\n");
+	fprintf(hp, "@%s\nD;JNE\n", pstCmd->arg1.c_str());
+
+}
+void WriteGoTo(CMD * pstCmd, FILE* hp)
+{
+	Assert(pstCmd->arg1.size() > 0, "Wrong Label String");
+	Assert(pstCmd->arg2 == -1, "Wrong Label Command Parse");
+	
+	fprintf(hp, "@%s\n0;JMP\n", pstCmd->arg1.c_str());
+
+}
+void WriteFunction(CMD * pstCmd, FILE* hp)
+{
+	Assert(pstCmd->arg1.size() > 0, "Wrong Function Name");
+	Assert(pstCmd->arg2 >= 0, "Wrong Function Locals Count");
+	//string LabelForLocalPush(pstCmd);
+	FunctionStack.push(pstCmd->arg1);
+	fprintf(hp, "(%s)\n", pstCmd->arg1.c_str());
+	fprintf(hp, "@%d\nD=A\n",pstCmd->arg2);
+	fprintf(hp, "(LOCAL_PUSH_%s_%d)\n",pstCmd->arg1.c_str(),pstCmd->arg2);
+	fprintf(hp, "@END_LOCAL_PUSH_%s_%d\nD=D-1;JLT\n", pstCmd->arg1.c_str(), pstCmd->arg2);
+	PUSH_FALSE(hp);
+	fprintf(hp, "@LOCAL_PUSH_%s_%d\n0;JMP\n", pstCmd->arg1.c_str(), pstCmd->arg2);
+	fprintf(hp, "(END_LOCAL_PUSH_%s_%d)\n", pstCmd->arg1.c_str(), pstCmd->arg2);
+	//fprintf(hp, "@LOCAL_PUSH_%s_%d\nD=D-1;JGT\n", pstCmd->arg1.c_str(), pstCmd->arg2);
+}
+
+void WriteReturn(CMD * pstCmd, FILE* hp)
+{
+	Assert(pstCmd->arg1.size() == 0, "Wrong Label String");
+	Assert(pstCmd->arg2 == -1, "Wrong Label Command Parse");
+	//FRAME=LCL
+	fprintf(hp, "@LCL\t//FRAME=LCL\nD=M\n@FRAME\nM=D\n\n");
+	//RET=*(FRAME-5)
+	fprintf(hp, "@5\t//RET=*(FRAME-5)\nAD=D-A\nD=M\n@ret_%s\nM=D\n\n", FunctionStack.top().c_str());
+	//*ARG=POP()
+	fprintf(hp, "@SP\t//*ARG=POP()\nAM=M-1\nD=M\n");
+	//DEC_SP(hp);
+	//D_AT_SP(hp,D=M);
+	fprintf(hp, "@ARG\nA=M\nM=D\n\n");
+	//SP=ARG+1
+	fprintf(hp, "D=A\t//SP=ARG+1\n@SP\nM=D+1\n\n");
+
+	//THAT = *(FRAME-1)
+	fprintf(hp, "@FRAME\t//THAT=*(FRAME-1)\nAM=M-1\nD=M\n@THAT\nM=D\n\n");
+	//THIS = *(FRAME-2)
+	fprintf(hp, "@FRAME\t//THIS=*(FRAME-2)\nAM=M-1\nD=M\n@THIS\nM=D\n\n");
+	//ARG= *(FRAME-3)
+	fprintf(hp, "@FRAME\t//ARG=*(FRAME-3)\nAM=M-1\nD=M\n@ARG\nM=D\n\n");
+	//LCL= *(FRAME-4)
+	fprintf(hp, "@FRAME\t//LCL=*(FRAME-4)\nAM=M-1\nD=M\n@LCL\nM=D\n\n");
+	fprintf(hp, "@ret_%s\n", FunctionStack.top().c_str());
+	fprintf(hp, "A=M\n0;JMP\n");
+	FunctionStack.pop();
+
+}
+int gnRetCall = 0;
+void WriteCall(CMD * pstCmd, FILE* hp)
+{
+	Assert(pstCmd->arg1.size() > 0, "Wrong Function Name");
+	Assert(pstCmd->arg2 >= 0, "Wrong Function Locals Count");
+	int n = pstCmd->arg2;
+	//push return Address
+	fprintf(hp, "@RETURN_ADD_CALL%d\t//push return Address\nD=A\n", gnRetCall);
+	AT_SP_D(hp); INC_SP(hp);
+	//push LCL
+	fprintf(hp, "@LCL\t//push LCL\nD=M\n");
+	AT_SP_D(hp); INC_SP(hp);
+	//push ARG
+	fprintf(hp, "@ARG\t//push ARG\nD=M\n");
+	AT_SP_D(hp); INC_SP(hp);
+	//push THIS
+	fprintf(hp, "@THIS\t//push THIS\nD=M\n");
+	AT_SP_D(hp); INC_SP(hp);
+	//push THAT
+	fprintf(hp, "@THAT\t//push THAT\nD=M\n");
+	AT_SP_D(hp); INC_SP(hp);
+	//ARG=SP-n-5
+	fprintf(hp, "@SP\t//ARG=SP-n-5\nD=M\n@%d\nD=D-A\n@5\nD=D-A\n@ARG\nM=D\n", n);
+	//LCL=SP
+	fprintf(hp, "@SP\t//LCL=SP\nD=M\n@LCL\nM=D\n");
+	//goto f
+	fprintf(hp, "@%s\t//goto f\n0;JMP\n", pstCmd->arg1.c_str());
+	//(ret address)
+	fprintf(hp, "(RETURN_ADD_CALL%d)\n",gnRetCall++);
+}
+
 
 void ConvertCmd(CMD * pstCmd,FILE* hp,char*fn)
 {
@@ -329,6 +453,24 @@ void ConvertCmd(CMD * pstCmd,FILE* hp,char*fn)
 			break;
 		case C_POP:
 			ConvertPopCmd(pstCmd, hp,fn);
+			break;
+		case C_LABEL:
+			WriteLabel(pstCmd, hp);
+			break;
+		case C_IF:
+			WriteIfGoTo(pstCmd, hp);
+			break;
+		case C_GOTO:
+			WriteGoTo(pstCmd, hp);
+			break;
+		case C_FUNCTION:
+			WriteFunction(pstCmd,hp);
+			break;
+		case C_RETURN:
+			WriteReturn(pstCmd, hp);
+			break;
+		case C_CALL:
+			WriteCall(pstCmd, hp);
 			break;
 		default:
 			Assert(false, "Incorrect Command");
@@ -344,6 +486,11 @@ int main(int argc, char*argv[])
 	FILE* fp = fopen(argv[1], "r");
 	char *fn = strtok(argv[1], ".");
 	strcpy(hackFn, fn);
+	//if (argc == 3)//dir
+	//{
+	//	printf("Directory Name = %s", argv[2]);
+	//	strcpy(hackFn, argv[2]);
+	//}
 	strcat(hackFn, ".asm");
 	if (!fp)
 	{
@@ -379,6 +526,7 @@ int main(int argc, char*argv[])
 					j++;
 					c = line[i + j];
 				} while (c != '\n' &&  c != '/');
+				while (ins.back() == ' ')ins.pop_back();
 				ParseCmd(ins,&stCurCmd);
 				fprintf(hp, "//%s\n", ins.c_str()); //Print comment in asm file for each instruction
 				if (stCurCmd.eCmdType == C_ARITHMETIC)
