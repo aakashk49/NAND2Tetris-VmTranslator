@@ -364,30 +364,34 @@ void WriteGoTo(CMD * pstCmd, FILE* hp)
 	fprintf(hp, "@%s\n0;JMP\n", pstCmd->arg1.c_str());
 
 }
+string gCurFun = "";
 void WriteFunction(CMD * pstCmd, FILE* hp)
 {
 	Assert(pstCmd->arg1.size() > 0, "Wrong Function Name");
 	Assert(pstCmd->arg2 >= 0, "Wrong Function Locals Count");
 	//string LabelForLocalPush(pstCmd);
-	FunctionStack.push(pstCmd->arg1);
+	//FunctionStack.push(pstCmd->arg1);
 	fprintf(hp, "(%s)\n", pstCmd->arg1.c_str());
 	fprintf(hp, "@%d\nD=A\n",pstCmd->arg2);
 	fprintf(hp, "(LOCAL_PUSH_%s_%d)\n",pstCmd->arg1.c_str(),pstCmd->arg2);
+	gCurFun =  pstCmd->arg1;
 	fprintf(hp, "@END_LOCAL_PUSH_%s_%d\nD=D-1;JLT\n", pstCmd->arg1.c_str(), pstCmd->arg2);
 	PUSH_FALSE(hp);
 	fprintf(hp, "@LOCAL_PUSH_%s_%d\n0;JMP\n", pstCmd->arg1.c_str(), pstCmd->arg2);
 	fprintf(hp, "(END_LOCAL_PUSH_%s_%d)\n", pstCmd->arg1.c_str(), pstCmd->arg2);
 	//fprintf(hp, "@LOCAL_PUSH_%s_%d\nD=D-1;JGT\n", pstCmd->arg1.c_str(), pstCmd->arg2);
 }
+int gnRetCall = 0;
 
 void WriteReturn(CMD * pstCmd, FILE* hp)
 {
 	Assert(pstCmd->arg1.size() == 0, "Wrong Label String");
 	Assert(pstCmd->arg2 == -1, "Wrong Label Command Parse");
+	//Assert(FunctionStack.size() >= 1, "Stack Empty");
 	//FRAME=LCL
 	fprintf(hp, "@LCL\t//FRAME=LCL\nD=M\n@FRAME\nM=D\n\n");
 	//RET=*(FRAME-5)
-	fprintf(hp, "@5\t//RET=*(FRAME-5)\nAD=D-A\nD=M\n@ret_%s\nM=D\n\n", FunctionStack.top().c_str());
+	fprintf(hp, "@5\t//RET=*(FRAME-5)\nAD=D-A\nD=M\n@ret_%s_%d\nM=D\n\n", gCurFun.c_str(),gnRetCall);
 	//*ARG=POP()
 	fprintf(hp, "@SP\t//*ARG=POP()\nAM=M-1\nD=M\n");
 	//DEC_SP(hp);
@@ -404,19 +408,18 @@ void WriteReturn(CMD * pstCmd, FILE* hp)
 	fprintf(hp, "@FRAME\t//ARG=*(FRAME-3)\nAM=M-1\nD=M\n@ARG\nM=D\n\n");
 	//LCL= *(FRAME-4)
 	fprintf(hp, "@FRAME\t//LCL=*(FRAME-4)\nAM=M-1\nD=M\n@LCL\nM=D\n\n");
-	fprintf(hp, "@ret_%s\n", FunctionStack.top().c_str());
+	fprintf(hp, "@ret_%s_%d\n", gCurFun.c_str(),gnRetCall++);
 	fprintf(hp, "A=M\n0;JMP\n");
-	FunctionStack.pop();
+	//FunctionStack.pop();
 
 }
-int gnRetCall = 0;
 void WriteCall(CMD * pstCmd, FILE* hp)
 {
 	Assert(pstCmd->arg1.size() > 0, "Wrong Function Name");
 	Assert(pstCmd->arg2 >= 0, "Wrong Function Locals Count");
 	int n = pstCmd->arg2;
 	//push return Address
-	fprintf(hp, "@RETURN_ADD_CALL%d\t//push return Address\nD=A\n", gnRetCall);
+	fprintf(hp, "@RETURN_ADD_%s_%s_%d\t//push return Address\nD=A\n", gCurFun.c_str(),pstCmd->arg1.c_str(),gnRetCall);
 	AT_SP_D(hp); INC_SP(hp);
 	//push LCL
 	fprintf(hp, "@LCL\t//push LCL\nD=M\n");
@@ -437,7 +440,7 @@ void WriteCall(CMD * pstCmd, FILE* hp)
 	//goto f
 	fprintf(hp, "@%s\t//goto f\n0;JMP\n", pstCmd->arg1.c_str());
 	//(ret address)
-	fprintf(hp, "(RETURN_ADD_CALL%d)\n",gnRetCall++);
+	fprintf(hp, "(RETURN_ADD_%s_%s_%d)\n", gCurFun.c_str(), pstCmd->arg1.c_str(),gnRetCall++);
 }
 
 
@@ -477,7 +480,17 @@ void ConvertCmd(CMD * pstCmd,FILE* hp,char*fn)
 			break;
 	}
 }
+bool isEmpty(FILE *file){
+	long savedOffset = ftell(file);
+	fseek(file, 0, SEEK_END);
 
+	if (ftell(file) == 0){
+		return true;
+	}
+
+	fseek(file, savedOffset, SEEK_SET);
+	return false;
+}
 int main(int argc, char*argv[])
 {
 	system("cd");
@@ -486,24 +499,42 @@ int main(int argc, char*argv[])
 	FILE* fp = fopen(argv[1], "r");
 	char *fn = strtok(argv[1], ".");
 	strcpy(hackFn, fn);
-	//if (argc == 3)//dir
-	//{
-	//	printf("Directory Name = %s", argv[2]);
-	//	strcpy(hackFn, argv[2]);
-	//}
+	if (argc == 3)//dir
+	{
+		printf("Directory Name = %s", argv[2]);
+		strcpy(hackFn, argv[2]);
+	}
 	strcat(hackFn, ".asm");
 	if (!fp)
 	{
 		printf("\nFile Not found");
 		while (1);
 	}
-	FILE *hp = fopen(hackFn, "w");
+	FILE *hp;
+	if (argc == 3)
+	{
+		hp = fopen(hackFn, "a");
+		//rp = fopen("ret")
+	}
+	else
+	hp = fopen(hackFn, "w");
 	if (!hp)
 	{
 		printf("\nUnable to Create hack File");
 		while (1);
 	}
+	if (isEmpty(hp))
+	{
+		//SP=256
+		fprintf(hp,"@256\t//Boot Code\nD=A\n@SP\nM=D\n");
+		CMD stInitCmd;
+		stInitCmd.eCmdType = C_CALL;
+		stInitCmd.arg1 = "Sys.init";
+		stInitCmd.arg2 = 0;
+		ConvertCmd(&stInitCmd, hp, fn);
 
+		//fprintf(hp, "@Sys.init\n0;JMP\n");
+	}
 	char line[100];
 	//read each line
 	while (fgets(line, 100, fp) != NULL)
